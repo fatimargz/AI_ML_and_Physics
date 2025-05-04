@@ -77,6 +77,9 @@ def generate_hard_negatives(features_all, pos_edges, k=5):
 features_all = np.vstack([event_features for event_features in all_node_features])
 all_neg_edges = generate_hard_negatives(features_all, all_pos_edges, k=20)
 num_pos = len(all_pos_edges)
+# 1:1 neg to pos, before I did not do this and got poor model
+sampled_indices = np.random.choice(len(all_neg_edges), size = num_pos, replace = False)
+all_neg_edges = all_neg_edges[sampled_indices]
 num_neg = len(all_neg_edges)
 print("num positives:", num_pos)
 print("num negatives:", num_neg)
@@ -174,7 +177,7 @@ for epoch in range(100):
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         epochs_no_improve = 0 
-        torch.save(model.state_dict(), '/data/ac.frodriguez/best_gnn_model.pth')
+        torch.save(model.state_dict(), '/data/ac.frodriguez/best_gnn_model2.pth')
     else:
         epochs_no_improve += 1
         if epochs_no_improve >= patience:
