@@ -60,7 +60,7 @@ for particle_id in particle_ids:
             v = hit_ids[i+1]
             source_nodes.append(u)
             target_nodes.append(v)
-            delta = features[v,:3] - features[u,3]
+            delta = features[v,:3] - features[u,:3]
             deltas.append(delta)
             distances.append(np.linalg.norm(delta))
 
@@ -68,46 +68,54 @@ edges = torch.tensor([source_nodes, target_nodes], dtype=torch.long)
 edge_features = torch.tensor(np.hstack([deltas, np.array(distances).reshape(-1, 1)]), dtype=torch.float)
 data = Data(x = node_features, edge_index = edges, edge_attr = edge_features)
 
-model.eval()
-with torch.no_grad():
-    logits = model(data)
-    edge_prob = torch.sigmoid(logits)
+def get_predict(data, hit, edge_threshold = 0.5):
+    model.eval()
+    with torch.no_grad():
+        probs = model(data)
 
-candidate_edges = edges[:, edge_prob>0.50].numpy().T
+    mask = (data.edge_index[0] ==hit)
+    edges_hit = data.edge_index[:,mask]
+    scores = probs[mask]
 
-def is_valid_edge(u, v, features, min_r=0.1, max_angle=30):
-    """Check if edge follows detector physics"""
-    r_u = np.linalg.norm(features[u,:2])  # Radial distance (xy-plane)
-    r_v = np.linalg.norm(features[v,:2])
-    delta_r = r_v - r_u
-    
-    theta_u = np.arctan2(features[u,1], features[u,0])
-    theta_v = np.arctan2(features[v,1], features[v,0])
-    delta_theta = np.abs(theta_v - theta_u)
-    
-    # Must move outward with limited angular change
-    return (delta_r > min_r) and (delta_theta < np.radians(max_angle))
+    pred = torch.zeros(data.num_nodes)
+    pred[edges_hit[1]] = scores
 
-# Convert features to numpy for faster processing
-features_np = data.x[:,:3].cpu().numpy()  # Only need x,y,z
+    return pred.numpy()
 
-# Filter edges
-valid_edges = []
-for u, v in candidate_edges:
-    if is_valid_edge(u, v, features_np):
-        valid_edges.append([u, v])
+def get_path(data, mask, thr, hit):
+    path = [hit]
+    a = 0
+    while True:
+        c = get_predict(data, path[-1], thr/2)
+        mask = (c>thr)*mask
+        mask[path[-1]]=0
 
-pred_edges = torch.tensor(valid_edges, dtype=torch.long).T
+        cand = np.where(c>thr)[0]
+        if len(cand)>0:
+            mask[cand[np.isin(module_id[cand], module_id[path])]] = 0
 
-def plot_track_comparison(hits, pred_edges, gt_indices, hit):
+        a = (c+a) * mask
+
+        if a.max() <thr * len(path):
+            break
+        
+        next_hit = a.argmax()
+        
+        if features[next_hit][2] <= features[path[-1]][2]:
+            break
+
+        path.append(next_hit)
+    return path
+
+
+
+def plot_track_comparison(hits, path_indices, gt_indices,hit):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
     # Plot predicted path
-    if len(pred_edges) > 0:
-        for u, v in pred_edges.T:
-            ax.plot(*zip(hits.iloc[int(u)][['x', 'y', 'z']], hits.iloc[int(v)][['x', 'y', 'z']]),
-                    'r-', linewidth=2, alpha=0.7, label='Predicted' if (u == pred_edges[0,0]) else "")
+    pred_hits = hits.iloc[path_indices]
+    ax.plot(pred_hits['x'], pred_hits['y'], pred_hits['z'], label='Predicted Path', color='r', marker='o')
 
     # Plot ground truth
     gt_hits = hits.iloc[gt_indices]
@@ -119,28 +127,34 @@ def plot_track_comparison(hits, pred_edges, gt_indices, hit):
     ax.legend()
     ax.set_title(f"Reconstructed path for hit num {hit}")
     plt.savefig(f"ReconstructedPath{event}Hit{hit}")
-    plt.close()
 
 
+def compute_metrics(predicted_indices, true_indices, n_hits_total):
+    # Create binary labels for all hits (1 if in path, 0 otherwise)
+    pred_binary = np.zeros(n_hits_total, dtype=int)
+    true_binary = np.zeros(n_hits_total, dtype=int)
 
-def compute_metrics(predicted_indices, true_indices, n_hits):
-    predicted = np.unique(pred_edges.flatten())
-    true = np.array(true_indices)
+    pred_binary[predicted_indices] = 1
+    true_binary[true_indices] = 1
 
-    y_true = np.zeros(n_hits)
-    y_pred = np.zeros(n_hits)
-
-    y_pred[predicted] = 1
-    y_true[true] = 1
-
-    precision = precision_score(y_true, y_pred)
-    recall = recall_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred)
+    precision = precision_score(true_binary, pred_binary)
+    recall = recall_score(true_binary, pred_binary)
+    f1 = f1_score(true_binary, pred_binary)
 
     return precision, recall, f1
 
-for i, hit in enumerate([0, 1, 2]):
+
+def plot_prob(pred, hit):
+    plt.hist(pred.numpy(), bins=50)
+    plt.xlabel("Predicted Edge Probability")
+    plt.ylabel("Count")
+    plt.title("Distribution of Edge Predictions")
+    title = 'probability_distribution_hit%d'%hit
+    plt.savefig(title)
+
+for hit in range(3):
     gt = np.where(truth.particle_id==truth.particle_id[hit])[0] 
-    plot_track_comparison(hits, pred_edges, gt.tolist(), i+1)
-   # precision, recall, f1 = compute_metrics(pred_edges, gt.tolist(), len(truth))
-   # print(f"Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1:.3f}")
+    path = get_path(data, np.ones(len(truth)), 0.5, hit)
+    plot_track_comparison(hits, path, gt.tolist(), hit+1)
+    precision, recall, f1 = compute_metrics(path, gt.tolist(), len(truth))
+    print(f"Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1:.3f}")
