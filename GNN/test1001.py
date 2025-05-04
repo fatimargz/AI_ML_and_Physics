@@ -37,7 +37,7 @@ class EdgeClassifier(torch.nn.Module):
 
 
 model = EdgeClassifier(node_feat_dim = 5, edge_feat_dim = 4, hidden_dim=64)
-model.load_state_dict(torch.load('/data/ac.frodriguez/best_gnn_model.pth'))
+model.load_state_dict(torch.load('/data/ac.frodriguez/best_gnn_model2.pth'))
 
 event = 'event000001001'
 hits, cells, truth, particles = get_event(event)
