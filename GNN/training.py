@@ -21,7 +21,7 @@ all_deltas = []
 all_distances = []
 all_edge_y = []
 
-for i in range(10,20):
+for i in range(10,40):
     event = 'event0000010%02d'%i
     hits, cells, truth, particles = get_event(event)
     hit_cells = cells.groupby(['hit_id']).value.count().values
@@ -73,10 +73,22 @@ def generate_hard_negatives(features_all, pos_edges, k=5):
                 neg_edges.append((u, v))
     return neg_edges
 
+# going to try random sampling
+deg generate_rand_negatives(num_nodes, truth_edges, num_neg_samples):
+    neg_edges = []
+    truth_set = set((u.item(), v.item()) for u, v in truth_edges.t())
+    while len(neg_edges) <num_neg_samples:
+        u,v = random.randint(0, num_nodes-1), random.randint(0, num_nodes-1)
+        if u != v and (u,v) not in truth_set:
+            neg_edges.append([u,v])
+    return neg_edges
+
+
 # Combine features from all events
 features_all = np.vstack([event_features for event_features in all_node_features])
-all_neg_edges = np.array(generate_hard_negatives(features_all, all_pos_edges, k=20))
+#all_neg_edges = np.array(generate_hard_negatives(features_all, all_pos_edges, k=20))
 num_pos = len(all_pos_edges)
+all_neg_edges = np.array(generate_rand_negatives(3, all_pos_edges, num_pos))
 # 1:1 neg to pos, before I did not do this and got poor model
 sampled_indices = np.random.choice(len(all_neg_edges), size = num_pos, replace = False)
 all_neg_edges = all_neg_edges[sampled_indices]
@@ -126,6 +138,8 @@ class EdgeClassifier(torch.nn.Module):
         self.edge_mlp = torch.nn.Sequential(
             torch.nn.Linear(2 * hidden_dim + edge_feat_dim, hidden_dim),
             torch.nn.ReLU(),
+            torch.nn.Linear(hidden_dim, hidden_dim),
+            torch.nn.ReLu(),
             torch.nn.Linear(hidden_dim, 1),
         )
 
@@ -178,7 +192,7 @@ for epoch in range(100):
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         epochs_no_improve = 0 
-        torch.save(model.state_dict(), '/data/ac.frodriguez/best_gnn_model2.pth')
+        torch.save(model.state_dict(), '/data/ac.frodriguez/best_gnn_model3.pth')
     else:
         epochs_no_improve += 1
         if epochs_no_improve >= patience:
