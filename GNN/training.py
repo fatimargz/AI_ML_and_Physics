@@ -75,7 +75,7 @@ def generate_hard_negatives(features_all, pos_edges, k=5):
 
 # Combine features from all events
 features_all = np.vstack([event_features for event_features in all_node_features])
-all_neg_edges = generate_hard_negatives(features_all, all_pos_edges, k=20)
+all_neg_edges = np.array(generate_hard_negatives(features_all, all_pos_edges, k=20))
 num_pos = len(all_pos_edges)
 # 1:1 neg to pos, before I did not do this and got poor model
 sampled_indices = np.random.choice(len(all_neg_edges), size = num_pos, replace = False)
@@ -92,7 +92,7 @@ for u, v in all_neg_edges:
 
 # combining
 # edge indices
-edges = np.array(all_pos_edges + all_neg_edges) 
+edges = np.concatenate([all_pos_edges,all_neg_edges]) 
 # edge labels
 labels = np.concatenate([np.ones(num_pos), np.zeros(num_neg)])
 # edge features
@@ -174,6 +174,7 @@ for epoch in range(100):
     total_norm = torch.sqrt(sum(p.grad.pow(2).sum() for p in model.parameters()))
     print(f"Gradient norm: {total_norm:.6f}")
     val_loss = validate(model, val_data)
+    print("val_loss", val_loss)
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         epochs_no_improve = 0 
