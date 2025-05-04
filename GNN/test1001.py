@@ -73,7 +73,7 @@ with torch.no_grad():
     logits = model(data)
     edge_prob = torch.sigmoid(logits)
 
-candidate_edges = edges[:, edge_prob>0.50]
+candidate_edges = edges[:, edge_prob>0.50].numpy().T
 
 def is_valid_edge(u, v, features, min_r=0.1, max_angle=30):
     """Check if edge follows detector physics"""
