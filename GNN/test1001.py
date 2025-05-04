@@ -73,7 +73,7 @@ with torch.no_grad():
     logits = model(data)
     edge_prob = torch.sigmoid(logits)
 
-pred_edges = edges[:, edge_prob>0.8]
+pred_edges = edges[:, edge_prob>0.7]
 
 
 def plot_track_comparison(hits, pred_edges, gt_indices, hit):
