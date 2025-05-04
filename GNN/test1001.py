@@ -154,7 +154,7 @@ def plot_prob(pred, hit):
 
 for hit in range(3):
     gt = np.where(truth.particle_id==truth.particle_id[hit])[0] 
-    path = get_path(data, np.ones(len(truth)), 0.5, hit)
+    path = get_path(data, np.ones(len(truth)), 0.4, hit)
     plot_track_comparison(hits, path, gt.tolist(), hit+1)
     precision, recall, f1 = compute_metrics(path, gt.tolist(), len(truth))
     print(f"Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1:.3f}")
