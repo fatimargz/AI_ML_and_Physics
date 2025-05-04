@@ -68,6 +68,15 @@ edges = torch.tensor([source_nodes, target_nodes], dtype=torch.long)
 edge_features = torch.tensor(np.hstack([deltas, np.array(distances).reshape(-1, 1)]), dtype=torch.float)
 data = Data(x = node_features, edge_index = edges, edge_attr = edge_features)
 
+def plot_prob(scores, hit):
+    plt.hist(scores, bins=50)
+    plt.xlabel("Edge Probabilities for Hit%d"%hit)
+    plt.ylabel("Count")
+    plt.title("Distribution of Edge Prediction")
+    title = 'probability_distribution_hit%d'%hit
+    plt.savefig(title)
+
+
 def get_predict(data, hit, edge_threshold = 0.5):
     model.eval()
     with torch.no_grad():
@@ -76,6 +85,7 @@ def get_predict(data, hit, edge_threshold = 0.5):
     mask = (data.edge_index[0] ==hit)
     edges_hit = data.edge_index[:,mask]
     scores = probs[mask]
+    plot_prob(scores, hit)
 
     pred = torch.zeros(data.num_nodes)
     pred[edges_hit[1]] = scores
@@ -144,13 +154,6 @@ def compute_metrics(predicted_indices, true_indices, n_hits_total):
     return precision, recall, f1
 
 
-def plot_prob(pred, hit):
-    plt.hist(pred.numpy(), bins=50)
-    plt.xlabel("Predicted Edge Probability")
-    plt.ylabel("Count")
-    plt.title("Distribution of Edge Predictions")
-    title = 'probability_distribution_hit%d'%hit
-    plt.savefig(title)
 
 for hit in range(3):
     gt = np.where(truth.particle_id==truth.particle_id[hit])[0] 
