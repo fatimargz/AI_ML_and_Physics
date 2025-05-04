@@ -73,8 +73,31 @@ with torch.no_grad():
     logits = model(data)
     edge_prob = torch.sigmoid(logits)
 
-pred_edges = edges[:, edge_prob>0.7]
+candidate_edges = edges[:, edge_prob>0.50]
 
+def is_valid_edge(u, v, features, min_r=0.1, max_angle=30):
+    """Check if edge follows detector physics"""
+    r_u = np.linalg.norm(features[u,:2])  # Radial distance (xy-plane)
+    r_v = np.linalg.norm(features[v,:2])
+    delta_r = r_v - r_u
+    
+    theta_u = np.arctan2(features[u,1], features[u,0])
+    theta_v = np.arctan2(features[v,1], features[v,0])
+    delta_theta = np.abs(theta_v - theta_u)
+    
+    # Must move outward with limited angular change
+    return (delta_r > min_r) and (delta_theta < np.radians(max_angle))
+
+# Convert features to numpy for faster processing
+features_np = data.x[:,:3].cpu().numpy()  # Only need x,y,z
+
+# Filter edges
+valid_edges = []
+for u, v in candidate_edges:
+    if is_valid_edge(u, v, features_np):
+        valid_edges.append([u, v])
+
+pred_edges = torch.tensor(valid_edges, dtype=torch.long).T
 
 def plot_track_comparison(hits, pred_edges, gt_indices, hit):
     fig = plt.figure()
