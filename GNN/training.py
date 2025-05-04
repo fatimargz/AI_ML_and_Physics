@@ -54,9 +54,13 @@ for i in range(10,40):
                     all_deltas.append(delta)
                     all_distances.append(np.linalg.norm(delta))
 
-all_pos_edges = list(zip(all_source_nodes, all_target_nodes))
+#all_pos_edges = list(zip(all_source_nodes, all_target_nodes))
 #print(all_pos_edges)
 #print(len(all_pos_edges))
+all_pos_edges = torch.stack([
+    torch.tensor(all_source_nodes, dtype=torch.long),
+    torch.tensor(all_target_nodes, dtype=torch.long)
+]) 
 
 # generating hard negatives
 from sklearn.neighbors import NearestNeighbors
@@ -74,56 +78,68 @@ def generate_hard_negatives(features_all, pos_edges, k=5):
     return neg_edges
 
 # going to try random sampling
-deg generate_rand_negatives(num_nodes, truth_edges, num_neg_samples):
+import random
+def generate_rand_negatives(num_nodes, truth_edges, num_neg_samples):
     neg_edges = []
-    truth_set = set((u.item(), v.item()) for u, v in truth_edges.t())
-    while len(neg_edges) <num_neg_samples:
+    truth_set = set((u.item(), v.item()) for u, v in truth_edges.T)
+    while len(neg_edges) < num_neg_samples:
         u,v = random.randint(0, num_nodes-1), random.randint(0, num_nodes-1)
         if u != v and (u,v) not in truth_set:
             neg_edges.append([u,v])
-    return neg_edges
+    return torch.tensor(neg_edges, dtype = torch.long).t()
 
 
 # Combine features from all events
-features_all = np.vstack([event_features for event_features in all_node_features])
-#all_neg_edges = np.array(generate_hard_negatives(features_all, all_pos_edges, k=20))
-num_pos = len(all_pos_edges)
-all_neg_edges = np.array(generate_rand_negatives(3, all_pos_edges, num_pos))
-# 1:1 neg to pos, before I did not do this and got poor model
-sampled_indices = np.random.choice(len(all_neg_edges), size = num_pos, replace = False)
-all_neg_edges = all_neg_edges[sampled_indices]
-num_neg = len(all_neg_edges)
-print("num positives:", num_pos)
-print("num negatives:", num_neg)
-all_neg_deltas = []
-all_neg_distances = []
-for u, v in all_neg_edges:
-    delta = features_all[v, :3] - features_all[u, :3]
-    all_neg_deltas.append(delta)
-    all_neg_distances.append(np.linalg.norm(delta))
+all_features = np.vstack([event_features for event_features in all_node_features])
+#all_neg_edges = np.array(generate_hard_negatives(all_features, all_pos_edges, k=20))
+num_pos = all_pos_edges.size(1)
+all_neg_edges = generate_rand_negatives(3, all_pos_edges, num_pos)
+num_neg = all_neg_edges.shape[1]
+## 1:1 neg to pos, before I did not do this and got poor model
+#sampled_indices = np.random.choice(len(all_neg_edges), size = num_pos, replace = False)
+#all_neg_edges = all_neg_edges[sampled_indices]
+
+#all_neg_deltas = []
+#all_neg_distances = []
+#for u, v in all_neg_edges:
+#    delta = all_features[v, :3] - all_features[u, :3]
+#    all_neg_deltas.append(delta)
+#    all_neg_distances.append(np.linalg.norm(delta))
 
 # combining
 # edge indices
-edges = np.concatenate([all_pos_edges,all_neg_edges]) 
+edges = torch.cat([all_pos_edges,all_neg_edges], dim = 1) 
 # edge labels
-labels = np.concatenate([np.ones(num_pos), np.zeros(num_neg)])
-# edge features
-edge_features = np.vstack([
-    np.hstack([all_deltas, np.array(all_distances).reshape(-1, 1)]),
-    np.hstack([all_neg_deltas, np.array(all_neg_distances).reshape(-1, 1)])
+#labels = np.concatenate([np.ones(num_pos), np.zeros(num_neg)])
+labels = torch.cat([
+    torch.ones(num_pos, dtype=torch.float),
+    torch.zeros(num_neg, dtype=torch.float)
 ])
+# edge features
+#edge_features = np.vstack([
+#    np.hstack([all_deltas, np.array(all_distances).reshape(-1, 1)]),
+#    np.hstack([all_neg_deltas, np.array(all_neg_distances).reshape(-1, 1)])
+#])
+# shuffle in unison
+perm = torch.randperm(edges.size(1))
+edges = edges[:, perm]
+labels = labels[perm]
 
-# need to shuffle in unison
-shuffle_idx = np.random.permutation(len(edges))
-edges = edges[shuffle_idx]
-labels = labels[shuffle_idx]
-edge_features = edge_features[shuffle_idx]
+all_features = torch.tensor(all_features, dtype=torch.float)
+
+src, dst = edges
+delta_pos = all_features[dst, :3] - all_features[src, :3]
+edge_features = torch.cat([
+    delta_pos,
+    torch.norm(delta_pos, dim=1, keepdim=True),
+    (all_features[src, 3] - all_features[dst, 3]).abs().unsqueeze(1)], dim=1)
+
 
 data = Data(
-    x=torch.tensor(features_all, dtype=torch.float),
-    edge_index=torch.tensor(edges.T, dtype=torch.long),
-    edge_attr=torch.tensor(edge_features, dtype=torch.float),
-    edge_y=torch.tensor(labels, dtype=torch.float)
+    x=all_features,
+    edge_index=edges,
+    edge_attr=edge_features,
+    edge_y=labels
 )
 
 ## GNN MODEL
@@ -139,7 +155,7 @@ class EdgeClassifier(torch.nn.Module):
             torch.nn.Linear(2 * hidden_dim + edge_feat_dim, hidden_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.ReLu(),
+            torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, 1),
         )
 
@@ -182,12 +198,16 @@ def validate(model, data):
 patience = 10
 epochs_no_improve = 0
 best_val_loss = float('inf')
+loss_vals = []
+val_vals = []
 for epoch in range(100):
     loss = train(model, train_data)
+    loass_vals.append(loss_vals)
     print(f"Epoch {epoch}, Loss: {loss:.4f}")
     total_norm = torch.sqrt(sum(p.grad.pow(2).sum() for p in model.parameters()))
     print(f"Gradient norm: {total_norm:.6f}")
     val_loss = validate(model, val_data)
+    val_vals.append(val_vals)
     print("val_loss", val_loss)
     if val_loss < best_val_loss:
         best_val_loss = val_loss
@@ -198,6 +218,7 @@ for epoch in range(100):
         if epochs_no_improve >= patience:
             print("early stopping!")
             break
-
+np.save('loss_values.npy',loss_vals)
+np.save('validationloss_values.npy', val_vals)
 torch.save(model.state_dict(), 'final_gcn_model.pth')
 
