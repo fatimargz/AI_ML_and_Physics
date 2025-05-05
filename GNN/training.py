@@ -129,10 +129,9 @@ all_features = torch.tensor(all_features, dtype=torch.float)
 
 src, dst = edges
 delta_pos = all_features[dst, :3] - all_features[src, :3]
-edge_features = torch.cat([
-    delta_pos,
-    torch.norm(delta_pos, dim=1, keepdim=True),
-    (all_features[src, 3] - all_features[dst, 3]).abs().unsqueeze(1)], dim=1)
+distance = torch.norm(delta_pos, dim=1, keepdim=True)  
+delta_energy = (all_features[src, 3] - all_features[dst, 3]).abs().unsqueeze(1)  
+edge_features = torch.cat([delta_pos, distance, delta_energy], dim=1)
 
 
 data = Data(
@@ -150,6 +149,7 @@ class EdgeClassifier(torch.nn.Module):
         super().__init__()
         self.conv1 = GCNConv(node_feat_dim, hidden_dim)
         self.conv2 = GCNConv(hidden_dim, hidden_dim)
+        self.conv3 = GCNConv(hidden_dim, hidden_dim)
         # this is a perceptron
         self.edge_mlp = torch.nn.Sequential(
             torch.nn.Linear(2 * hidden_dim + edge_feat_dim, hidden_dim),
@@ -163,14 +163,15 @@ class EdgeClassifier(torch.nn.Module):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         # generating node embeddings
         x = self.conv1(x, edge_index).relu()
-        x = self.conv2(x, edge_index)
+        x = self.conv2(x, edge_index).relu()
+        x = self.conv3(x, edge_index)
         source, target = edge_index
         edge_emb = torch.cat([x[source], x[target], edge_attr], dim=1)
         out = self.edge_mlp(edge_emb).squeeze(1)  
         return torch.sigmoid(out)  
 
 # training loop 
-model = EdgeClassifier(node_feat_dim=5, edge_feat_dim=4, hidden_dim=64)
+model = EdgeClassifier(node_feat_dim=5, edge_feat_dim=5, hidden_dim=64)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 criterion = torch.nn.BCELoss()
 
@@ -185,34 +186,38 @@ def train(model, data):
 
 # going to add validation check and split data 80/20
 from torch_geometric.transforms import RandomLinkSplit
-edge_transform = RandomLinkSplit(num_val = .2, num_test = .8, is_undirected=False, split_labels=True)
+edge_transform = RandomLinkSplit(num_val = .2, num_test = .8, is_undirected=False, split_labels=True, add_negative_train_samples=False)
 train_data, val_data, test_data = edge_transform(data)
+
+print("Original edge_attr dim:", data.edge_attr.shape)
+print("Train edge_attr dim:", train_data.edge_attr.shape)
+print("Model expects edge_feat_dim:", model.edge_mlp[0].in_features - 2*model.conv1.out_channels)
 
 def validate(model, data):
     model.eval()
     with torch.no_grad():
         out = model(data)
         val_loss = criterion(out, data.edge_y)
-    return val_loss
+    return val_loss.item()
 
 patience = 10
 epochs_no_improve = 0
 best_val_loss = float('inf')
 loss_vals = []
 val_vals = []
-for epoch in range(100):
+for epoch in range(35):
     loss = train(model, train_data)
-    loass_vals.append(loss_vals)
+    loss_vals.append(float(loss))
     print(f"Epoch {epoch}, Loss: {loss:.4f}")
     total_norm = torch.sqrt(sum(p.grad.pow(2).sum() for p in model.parameters()))
     print(f"Gradient norm: {total_norm:.6f}")
     val_loss = validate(model, val_data)
-    val_vals.append(val_vals)
+    val_vals.append(float(val_loss))
     print("val_loss", val_loss)
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         epochs_no_improve = 0 
-        torch.save(model.state_dict(), '/data/ac.frodriguez/best_gnn_model3.pth')
+        #torch.save(model.state_dict(), '/data/ac.frodriguez/best_gnn_model4.pth')
     else:
         epochs_no_improve += 1
         if epochs_no_improve >= patience:
