@@ -17,9 +17,12 @@ class EdgeClassifier(torch.nn.Module):
         super().__init__()
         self.conv1 = GCNConv(node_feat_dim, hidden_dim)
         self.conv2 = GCNConv(hidden_dim, hidden_dim)
+        self.conv3 = GCNConv(hidden_dim, hidden_dim)
         # this is a perceptron
         self.edge_mlp = torch.nn.Sequential(
             torch.nn.Linear(2 * hidden_dim + edge_feat_dim, hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_dim, hidden_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim, 1),
         )
@@ -28,16 +31,15 @@ class EdgeClassifier(torch.nn.Module):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         # generating node embeddings
         x = self.conv1(x, edge_index).relu()
-        x = self.conv2(x, edge_index)
+        x = self.conv2(x, edge_index).relu()
+        x = self.conv3(x, edge_index)
         source, target = edge_index
         edge_emb = torch.cat([x[source], x[target], edge_attr], dim=1)
         out = self.edge_mlp(edge_emb).squeeze(1)
         return torch.sigmoid(out)
 
-
-
-model = EdgeClassifier(node_feat_dim = 5, edge_feat_dim = 4, hidden_dim=64)
-model.load_state_dict(torch.load('/data/ac.frodriguez/best_gnn_model2.pth'))
+model = EdgeClassifier(node_feat_dim = 5, edge_feat_dim = 5, hidden_dim=64)
+model.load_state_dict(torch.load('final_gcn_model.pth'))
 
 event = 'event000001001'
 hits, cells, truth, particles = get_event(event)
@@ -65,16 +67,34 @@ for particle_id in particle_ids:
             distances.append(np.linalg.norm(delta))
 
 edges = torch.tensor([source_nodes, target_nodes], dtype=torch.long)
-edge_features = torch.tensor(np.hstack([deltas, np.array(distances).reshape(-1, 1)]), dtype=torch.float)
+
+src, dst = edges
+delta_pos = node_features[dst, :3] - node_features[src, :3]
+distance = torch.norm(delta_pos, dim=1, keepdim=True)
+delta_energy = (node_features[src, 3] - node_features[dst, 3]).abs().unsqueeze(1)
+edge_features = torch.cat([delta_pos, distance, delta_energy], dim=1)
+
 data = Data(x = node_features, edge_index = edges, edge_attr = edge_features)
 
+model.eval()
+with torch.no_grad():
+    probs = model(data)
+
+#plt.hist(probs, bins=50)
+#plt.xlabel("Edge Probabilities")
+#plt.ylabel("Count")
+#plt.savefig("probabilit_dist.png")
+
+
 def plot_prob(scores, hit):
-    plt.hist(scores, bins=50)
-    plt.xlabel("Edge Probabilities for Hit%d"%hit)
-    plt.ylabel("Count")
-    plt.title("Distribution of Edge Prediction")
-    title = 'probability_distribution_hit%d'%hit
-    plt.savefig(title)
+    fig2 = plt.figure()
+    ax2 = fig2.add_subplot()
+    ax2.hist(scores, bins=50)
+    ax2.set_xlabel("Edge Probabilities for Hit%d"%hit)
+    ax2.set_ylabel("Count")
+    ax2.set_title("Distribution of Edge Prediction")
+    png = 'probability_distribution_hit%d'%hit
+    plt.savefig(png)
 
 
 def get_predict(data, hit, edge_threshold = 0.5):
@@ -85,6 +105,7 @@ def get_predict(data, hit, edge_threshold = 0.5):
     mask = (data.edge_index[0] ==hit)
     edges_hit = data.edge_index[:,mask]
     scores = probs[mask]
+    print(len(scores))
     plot_prob(scores, hit)
 
     pred = torch.zeros(data.num_nodes)
